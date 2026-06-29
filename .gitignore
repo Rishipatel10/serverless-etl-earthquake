@@ -1,0 +1,7 @@
+.env
+*.csv
+*.geojson
+__pycache__/
+package/
+*.zip
+.ipynb_checkpoints/
