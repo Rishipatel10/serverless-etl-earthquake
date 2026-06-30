@@ -1,104 +1,130 @@
 import json
-import os
-from datetime import datetime
 import boto3
+import os
 
-# Initialize AWS clients
-s3_client = boto3.client('s3')
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table('clean_records') 
+# AWS Lambda Client
+lambda_client = boto3.client("lambda")
+
+# Dataset -> Lambda Mapping
+ROUTES = {
+    "earthquake": "EarthquakeLambda",
+    "weather": "WeatherLambda",
+    "product": "ProductLambda"
+}
+
+# Supported File Types
+SUPPORTED_FILE_TYPES = {
+    "json",
+    "csv",
+    "xlsx",
+    "xls"
+}
+
 
 def lambda_handler(event, context):
-    # Audit tracking metrics
-    total_input_records = 0
-    inserted_records = 0
-    rejected_records = 0
-    execution_timestamp = datetime.utcnow().isoformat()
-    
+
     try:
-        # 1. EXTRACT: Fetch bucket name and file key from the S3 trigger event
-        bucket_name = event['Records'][0]['s3']['bucket']['name']
-        file_key = event['Records'][0]['s3']['object']['key']
-        print(f"Starting ETL execution for file: s3://{bucket_name}/{file_key}")
-        
-        # Read file from S3
-        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        geojson_content = json.loads(response['Body'].read().decode('utf-8'))
-        
-    except Exception as e:
-        print(f"Extraction failed: {str(e)}")
-        return {"status": "Error", "message": "Failed to extract file from S3"}
 
-    # 2. TRANSFORM & LOAD
-    features = geojson_content.get('features', [])
-    total_input_records = len(features)
-    
-    for feature in features:
-        try:
-            properties = feature.get('properties', {})
-            geometry = feature.get('geometry', {})
-            
-            # Extract basic data points
-            record_id = feature.get('id') or properties.get('ids')
-            mag = properties.get('mag')
-            place = properties.get('place')
-            raw_time = properties.get('time') # Epoch millisecond timestamp
-            
-            # Rule A: Remove/Reject invalid records (Transform Requirement)
-            if not record_id or mag is None or raw_time is None:
-                rejected_records += 1
-                continue
-                
-            # Rule B: Standardize Field 1 (Convert epoch millisecond to readable UTC string)
-            readable_date = datetime.utcfromtimestamp(raw_time / 1000.0).strftime('%Y-%m-%d %H:%M:%S UTC')
-            
-            # Rule C: Standardize Field 2 (Clean up whitespace and title-case the location text)
-            clean_place = str(place).strip().title() if place else "Unknown Location"
-            
-            # Rule D: Add Derived Field (Calculate Severity from Magnitude)
-            mag_float = float(mag)
-            if mag_float >= 6.0:
-                severity = "Major"
-            elif mag_float >= 4.5:
-                severity = "Moderate"
-            else:
-                severity = "Minor"
-                
-            # Extract geography details
-            coordinates = geometry.get('coordinates', [0.0, 0.0])
-            longitude = str(coordinates[0])
-            latitude = str(coordinates[1])
+        record = event["Records"][0]
 
-            # Prepare structured DynamoDB payload
-            item = {
-                'record_id': str(record_id),          # Partition Key
-                'place': clean_place,                 
-                'magnitude': str(mag_float),
-                'severity': severity,                 # Derived field
-                'event_time': readable_date,          # Standardized field 1
-                'longitude': longitude,
-                'latitude': latitude,
-                'processed_at': execution_timestamp
+        bucket = record["s3"]["bucket"]["name"]
+        key = record["s3"]["object"]["key"]
+
+        print("=" * 50)
+        print(f"Bucket      : {bucket}")
+        print(f"Object Key  : {key}")
+
+        # Example:
+        # raw/earthquake/data.json
+
+        parts = key.split("/")
+
+        if len(parts) < 3:
+
+            return {
+                "statusCode": 400,
+                "body": "Invalid Folder Structure. Expected raw/<dataset>/<filename>"
             }
-            
-            # 3. LOAD: Write payload to DynamoDB table
-            table.put_item(Item=item)
-            inserted_records += 1
-            
-        except Exception as row_error:
-            print(f"Skipping row error processing item: {str(row_error)}")
-            rejected_records += 1
 
-    # 4. AUDIT: Log data metrics directly into CloudWatch logs
-    audit_summary = {
-        "timestamp": execution_timestamp,
-        "total_input_records": total_input_records,
-        "inserted_records": inserted_records,
-        "rejected_records": rejected_records
-    }
-    print(f"AUDIT SUMMARY: {json.dumps(audit_summary)}")
-    
-    return {
-        "statusCode": 200,
-        "body": json.dumps(audit_summary)
-    }
+        folder = parts[0]
+        dataset = parts[1]
+        filename = parts[-1]
+
+        print(f"Folder      : {folder}")
+        print(f"Dataset     : {dataset}")
+        print(f"Filename    : {filename}")
+
+        # Validate folder
+        if folder.lower() != "raw":
+
+            return {
+                "statusCode": 400,
+                "body": "Files must be uploaded inside the raw/ folder."
+            }
+
+        # Validate dataset
+        if dataset not in ROUTES:
+
+            return {
+                "statusCode": 400,
+                "body": f"Unsupported Dataset : {dataset}"
+            }
+
+        # Detect extension
+        extension = os.path.splitext(filename)[1].lower().replace(".", "")
+
+        print(f"File Type   : {extension}")
+
+        # Validate file type
+        if extension not in SUPPORTED_FILE_TYPES:
+
+            return {
+                "statusCode": 400,
+                "body": f"Unsupported File Type : {extension}"
+            }
+
+        lambda_name = ROUTES[dataset]
+
+        print(f"Invoking Lambda : {lambda_name}")
+
+        response = lambda_client.invoke(
+            FunctionName=lambda_name,
+            InvocationType="Event",
+            Payload=json.dumps(event)
+        )
+
+        print(response)
+
+        return {
+
+            "statusCode": 200,
+
+            "body": json.dumps({
+
+                "message": "Lambda Invoked Successfully",
+
+                "dataset": dataset,
+
+                "file_type": extension,
+
+                "target_lambda": lambda_name
+
+            })
+
+        }
+
+    except Exception as e:
+
+        print(f"Router Error : {str(e)}")
+
+        return {
+
+            "statusCode": 500,
+
+            "body": json.dumps({
+
+                "error": str(e)
+
+            })
+
+        }
