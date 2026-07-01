@@ -2,7 +2,7 @@ import json
 
 from parsers.json_parser import read_json
 from parsers.csv_parser import read_csv
-from parsers.excel_parser import read_excel
+from parsers.xml_parser import read_xml
 
 from utils.helper import get_file_extension
 from utils.dynamodb import save_item
@@ -27,8 +27,8 @@ def lambda_handler(event, context):
         elif extension == "csv":
             records = read_csv(bucket_name, file_key)
 
-        elif extension in ["xlsx", "xls"]:
-            records = read_excel(bucket_name, file_key)
+        elif extension == "xml":
+            records = read_xml(bucket_name, file_key)
 
         else:
             raise Exception(f"Unsupported File Type : {extension}")

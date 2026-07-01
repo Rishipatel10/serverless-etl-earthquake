@@ -3,7 +3,7 @@ from datetime import datetime
 
 from parsers.json_parser import read_json
 from parsers.csv_parser import read_csv
-from parsers.excel_parser import read_excel
+from parsers.xml_parser import read_xml
 
 from utils.helper import get_file_extension
 from utils.dynamodb import save_item
@@ -35,8 +35,8 @@ def lambda_handler(event, context):
         elif extension == "csv":
             records = read_csv(bucket_name, file_key)
 
-        elif extension in ["xlsx", "xls"]:
-            records = read_excel(bucket_name, file_key)
+        elif extension == "xml":
+            records = read_xml(bucket_name, file_key)
 
         else:
             raise Exception(f"Unsupported File Type : {extension}")
@@ -82,15 +82,10 @@ def lambda_handler(event, context):
             magnitude = float(magnitude)
 
             if magnitude >= 6:
-
                 severity = "Major"
-
             elif magnitude >= 4.5:
-
                 severity = "Moderate"
-
             else:
-
                 severity = "Minor"
 
             item = {
@@ -114,17 +109,13 @@ def lambda_handler(event, context):
             }
 
             if save_item(item):
-
                 inserted_records += 1
-
             else:
-
                 rejected_records += 1
 
         except Exception as e:
 
             print(f"Record Processing Error : {str(e)}")
-
             rejected_records += 1
 
     audit = {

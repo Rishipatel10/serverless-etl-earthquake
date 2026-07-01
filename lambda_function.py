@@ -16,8 +16,7 @@ ROUTES = {
 SUPPORTED_FILE_TYPES = {
     "json",
     "csv",
-    "xlsx",
-    "xls"
+    "xml"
 }
 
 
